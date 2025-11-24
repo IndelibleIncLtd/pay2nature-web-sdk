@@ -16,6 +16,29 @@ yarn add @pay2nature/widget-sdk
 
 ## Quick Start
 
+### HTML/CDN (Simplest Method)
+
+The easiest way to integrate the Pay2Nature widget is by adding a script tag in the `<head>` and a div in the `<body>` with data attributes.
+
+**Important:** 
+- The `<script>` tag must be placed within the `<head>` section
+- The `<div>` element must be placed within the `<body>` section
+
+```html
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Pay2Nature Widget</title>
+        <script src="https://pay2nature-widget-testing-335180951943.europe-west4.run.app/widget/pay2nature.js"></script>
+    </head>
+    <body>
+        <div id="pay2nature-widget"
+             data-widget-token="59a7745632f08223fc2caa1f59fca7b6"
+             data-base-url="https://pay2nature-widget-testing-335180951943.europe-west4.run.app"></div>
+    </body>
+</html>
+```
+
 ### Vanilla JavaScript
 
 ```html
@@ -311,5 +334,5 @@ MIT
 
 For issues and questions:
 
-- GitHub Issues: https://github.com/your-org/pay2nature-sdk/issues
-- Email: support@pay2nature.com
+- GitHub Issues: https://github.com/IndelibleIncLtd/Pay2nature-web-sdk/issues
+- Email: support@pay2nature.co.uk

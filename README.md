@@ -20,7 +20,8 @@ yarn add @pay2nature/widget-sdk
 
 The easiest way to integrate the Pay2Nature widget is by adding a script tag in the `<head>` and a div in the `<body>` with data attributes.
 
-**Important:** 
+**Important:**
+
 - The `<script>` tag must be placed within the `<head>` section
 - The `<div>` element must be placed within the `<body>` section
 
@@ -32,9 +33,11 @@ The easiest way to integrate the Pay2Nature widget is by adding a script tag in 
         <script src="https://pay2nature-widget-testing-335180951943.europe-west4.run.app/widget/pay2nature.js"></script>
     </head>
     <body>
-        <div id="pay2nature-widget"
-             data-widget-token="59a7745632f08223fc2caa1f59fca7b6"
-             data-base-url="https://pay2nature-widget-testing-335180951943.europe-west4.run.app"></div>
+        <div
+            id="pay2nature-widget"
+            data-widget-token="59a7745632f08223fc2caa1f59fca7b6"
+            data-base-url="https://pay2nature-widget-testing-335180951943.europe-west4.run.app"
+        ></div>
     </body>
 </html>
 ```

@@ -38,25 +38,36 @@ export const Pay2NatureWidgetComponent: React.FC<Pay2NatureWidgetProps> = ({
   useEffect(() => {
     if (!containerRef.current) return;
 
+    let isMounted = true;
+
     // Destroy existing instance if it exists
     if (widgetInstanceRef.current) {
       widgetInstanceRef.current.destroy();
       widgetInstanceRef.current = null;
     }
 
-    // Create wrapper functions that use the latest callbacks from ref
-    const options: Pay2NatureWidgetOptions = {
-      widgetToken,
-      baseUrl,
-      container: containerRef.current,
-      onContribution: (data) => callbacksRef.current.onContribution?.(data),
-      onToggle: (isEnabled) => callbacksRef.current.onToggle?.(isEnabled),
-      onError: (error) => callbacksRef.current.onError?.(error),
+    // Small delay to ensure cleanup is complete (helps with React StrictMode)
+    const initWidget = () => {
+      if (!isMounted || !containerRef.current) return;
+
+      // Create wrapper functions that use the latest callbacks from ref
+      const options: Pay2NatureWidgetOptions = {
+        widgetToken,
+        baseUrl,
+        container: containerRef.current,
+        onContribution: (data) => callbacksRef.current.onContribution?.(data),
+        onToggle: (isEnabled) => callbacksRef.current.onToggle?.(isEnabled),
+        onError: (error) => callbacksRef.current.onError?.(error),
+      };
+
+      widgetInstanceRef.current = new Pay2NatureWidget(options);
     };
 
-    widgetInstanceRef.current = new Pay2NatureWidget(options);
+    // Use requestAnimationFrame to ensure DOM is ready and avoid race conditions
+    requestAnimationFrame(initWidget);
 
     return () => {
+      isMounted = false;
       if (widgetInstanceRef.current) {
         widgetInstanceRef.current.destroy();
         widgetInstanceRef.current = null;

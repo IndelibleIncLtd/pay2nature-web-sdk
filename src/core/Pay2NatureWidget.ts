@@ -98,18 +98,35 @@ export class Pay2NatureWidget {
     private createShadowDOM(): void {
         if (!this.container) return;
 
-        // Check if shadow root already exists
+        // Check if shadow root already exists on the container
+        // This can happen in React StrictMode which double-invokes effects
         if (this.container.shadowRoot) {
             // Reuse existing shadow root and clear it
             this.shadowRoot = this.container.shadowRoot;
             this.shadowRoot.innerHTML = "";
-        } else {
-            // Create new shadow root
-            try {
-                this.shadowRoot = this.container.attachShadow({
-                    mode: "closed",
-                });
-            } catch (error) {
+            return;
+        }
+
+        // Create new shadow root
+        try {
+            // Check again right before attaching (race condition protection)
+            const existingShadowBeforeAttach = this.container.shadowRoot;
+            if (existingShadowBeforeAttach) {
+                this.shadowRoot = existingShadowBeforeAttach as ShadowRoot;
+                this.shadowRoot.innerHTML = "";
+                return;
+            }
+
+            this.shadowRoot = this.container.attachShadow({
+                mode: "closed",
+            });
+        } catch (error) {
+            // If shadow DOM creation fails, check if one was created by another instance
+            const existingShadowRoot = this.container.shadowRoot;
+            if (existingShadowRoot) {
+                this.shadowRoot = existingShadowRoot as ShadowRoot;
+                this.shadowRoot.innerHTML = "";
+            } else {
                 console.error(
                     "Pay2Nature: Failed to create shadow DOM:",
                     error
@@ -804,11 +821,17 @@ export class Pay2NatureWidget {
     public destroy(): void {
         if (this.shadowRoot) {
             // Clear the shadow root content instead of trying to remove it
-            this.shadowRoot.innerHTML = "";
+            try {
+                this.shadowRoot.innerHTML = "";
+            } catch (error) {
+                // Ignore errors when clearing (shadow root might already be detached)
+                console.warn("Pay2Nature: Error clearing shadow root:", error);
+            }
             this.shadowRoot = null;
         }
         // Note: We don't remove the shadow root itself as it's attached to the container
         // and removing it would cause issues if the widget is re-initialized
+        // The shadow root will be reused by new instances if the container is reused
     }
 
     public updateConfig(config: Partial<WidgetConfig>): void {

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2025-01-XX
+
+### Fixed
+
+- Fixed Shadow DOM creation error in React StrictMode
+  - Added race condition protection when creating shadow roots
+  - Improved error handling to gracefully handle cases where shadow root already exists
+  - Added defensive checks before and during shadow root attachment
+  - Fixed TypeScript type inference issues in shadow DOM creation
+
 ## [1.0.2] - 2025-01-XX
 
 ### Fixed

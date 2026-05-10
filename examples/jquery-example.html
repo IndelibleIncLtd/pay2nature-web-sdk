@@ -37,8 +37,14 @@
     
     <!-- Load jQuery from CDN -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    
-    <!-- Load Pay2Nature SDK (UMD bundle) -->
+
+    <!--
+      Load Pay2Nature SDK (UMD bundle).
+      In production, use a hosted version such as:
+        <script src="https://unpkg.com/@pay2nature/widget-sdk/dist/index.umd.js"></script>
+      For local development, run `npm run build` in the SDK package first
+      so that ../dist/index.umd.js exists.
+    -->
     <script src="../dist/index.umd.js"></script>
     
     <script>

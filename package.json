@@ -1,7 +1,8 @@
 {
   "name": "@pay2nature/widget-sdk",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "type": "module",
+  "sideEffects": false,
   "description": "Pay2Nature Widget SDK - Integrate Pay2Nature payment widgets into any web application",
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
@@ -31,14 +32,16 @@
   },
   "files": [
     "dist",
+    "src/vue",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "rollup -c",
     "build:watch": "rollup -c -w",
     "prepublishOnly": "npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"No tests configured yet — see CHANGELOG\" && exit 0"
   },
   "keywords": [
     "pay2nature",

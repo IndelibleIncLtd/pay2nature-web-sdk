@@ -1,4 +1,9 @@
-src/
+# Exclude all of src/ except the Vue single-file component, which is consumed
+# directly by Vue users via the `./vue` export and must ship in the package.
+src/*
+!src/vue
+!src/vue/**
+
 *.config.js
 *.config.ts
 tsconfig.json
@@ -11,4 +16,5 @@ node_modules/
 *.test.tsx
 *.spec.ts
 *.spec.tsx
+examples/
 

@@ -8,8 +8,23 @@ export interface Pay2NatureWidgetOptions {
     baseUrl: string;
     container?: HTMLElement | string | null;
     onContribution?: (data: ContributionData) => void;
+    /**
+     * Fired when the widget's enabled state changes via `setEnabled()`.
+     * The contribute button is disabled when `isEnabled` is false.
+     */
     onToggle?: (isEnabled: boolean) => void;
     onError?: (error: Error) => void;
+    /**
+     * Request timeout in milliseconds for all fetch calls (config, payment).
+     * Defaults to 30000 (30s).
+     */
+    requestTimeoutMs?: number;
+    /**
+     * Override the URL used to dynamically load the mobile-money modal script.
+     * Defaults to `${baseUrl}/widget/mobile-money-modal.js`. Useful for
+     * self-hosted widget deployments or for pinning a specific modal version.
+     */
+    mobileMoneyModalUrl?: string;
 }
 
 export interface ContributionData {
@@ -39,15 +54,17 @@ export class Pay2NatureWidget {
     private selectedAmount: number = 0;
     private customAmount: string = "";
     private isCustom: boolean = false;
-    private isLoading: boolean = true;
     private config: WidgetConfig | null = null;
     private isProcessing: boolean = false;
     private mobileMoneyNumber: string = "";
     private mobileMoneyName: string = "";
     private mobileMoneyProvider: string = "";
     private mobileMoneyAnonymous: boolean = false;
-    private showMobileMoneyPrompt: boolean = false;
     private mobileMoneyModal: any = null;
+    private mobileMoneyModalUrl: string | null = null;
+    private mobileMoneyModalFailed: boolean = false;
+    private requestTimeoutMs: number = 30000;
+    private eventCleanups: Array<() => void> = [];
 
     // Default fallback values
     private currency: string = "USD";
@@ -74,6 +91,10 @@ export class Pay2NatureWidget {
         this.onContribution = options.onContribution || (() => {});
         this.onToggle = options.onToggle || (() => {});
         this.onError = options.onError || ((error) => console.error(error));
+        if (typeof options.requestTimeoutMs === "number" && options.requestTimeoutMs > 0) {
+            this.requestTimeoutMs = options.requestTimeoutMs;
+        }
+        this.mobileMoneyModalUrl = options.mobileMoneyModalUrl || null;
 
         // Initialize widget asynchronously
         this.init();
@@ -165,7 +186,7 @@ export class Pay2NatureWidget {
             }
 
             this.render();
-            this.attachEventListeners();
+            // Note: render() already calls attachEventListeners() internally.
         } catch (error) {
             console.error("Pay2Nature Widget initialization failed:", error);
             const errorMessage =
@@ -175,11 +196,66 @@ export class Pay2NatureWidget {
         }
     }
 
+    private async fetchWithTimeout(
+        url: string,
+        options: RequestInit = {}
+    ): Promise<Response> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+            () => controller.abort(),
+            this.requestTimeoutMs
+        );
+        try {
+            return await fetch(url, { ...options, signal: controller.signal });
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+                throw new Error(
+                    `Request timed out after ${this.requestTimeoutMs}ms: ${url}`
+                );
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    /**
+     * Retries idempotent GET requests on network/5xx errors with exponential backoff.
+     * Never used for payment POSTs to avoid double-charge risk.
+     */
+    private async fetchConfigWithRetry(
+        url: string,
+        maxAttempts: number = 3
+    ): Promise<Response> {
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const response = await this.fetchWithTimeout(url);
+                // Don't retry on 4xx — they're client errors that won't change.
+                if (response.ok || response.status < 500) {
+                    return response;
+                }
+                lastError = new Error(
+                    `HTTP ${response.status}: ${response.statusText}`
+                );
+            } catch (err) {
+                lastError = err;
+            }
+            if (attempt < maxAttempts) {
+                const backoffMs = 500 * Math.pow(2, attempt - 1);
+                await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            }
+        }
+        throw lastError instanceof Error
+            ? lastError
+            : new Error(String(lastError));
+    }
+
     private async fetchConfiguration(): Promise<void> {
         const url = `${this.baseUrl}/api/widget/${this.widgetToken}/config`;
 
         try {
-            const response = await fetch(url);
+            const response = await this.fetchConfigWithRetry(url);
 
             if (!response.ok) {
                 if (response.status === 404) {
@@ -226,10 +302,7 @@ export class Pay2NatureWidget {
                 this.minAmount + step * 3,
                 this.maxAmount,
             ].map((amount) => Math.round(amount * 100) / 100);
-
-            this.isLoading = false;
         } catch (error) {
-            this.isLoading = false;
             console.error("Failed to fetch widget configuration:", error);
             throw error;
         }
@@ -389,10 +462,14 @@ export class Pay2NatureWidget {
         </div>
         <div style="text-align: center; padding: 20px; color: #dc2626;">
           <div style="margin-bottom: 8px; font-weight: 500;">Configuration Error</div>
-          <div style="font-size: 12px; color: #7f1d1d;">${message}</div>
+          <div class="p2n-error-message" style="font-size: 12px; color: #7f1d1d;"></div>
         </div>
       </div>
     `;
+
+        // Populate error message via textContent to prevent XSS from API-sourced messages.
+        const errorEl = this.shadowRoot.querySelector(".p2n-error-message");
+        if (errorEl) errorEl.textContent = message;
     }
 
     private render(): void {
@@ -404,7 +481,7 @@ export class Pay2NatureWidget {
 
         this.shadowRoot.innerHTML = `
       ${this.getStyles()}
-      <div class="pay2nature-widget">
+      <div class="pay2nature-widget" role="region" aria-label="Pay2Nature contribution widget">
         <div class="p2n-header">
           <img src="https://storage.googleapis.com/cdn-pay2nature/logo-short.jpg" alt="Pay2Nature" class="p2n-logo" />
           <div class="p2n-brand">
@@ -413,37 +490,64 @@ export class Pay2NatureWidget {
           </div>
         </div>
         <p class="p2n-description">
-          Add a small contribution to verified nature projects. Your contribution goes directly to conservation efforts${this.activeProjectName ? ` in project <strong>${this.activeProjectName}</strong>` : ""}.
+          Add a small contribution to verified nature projects. Your contribution goes directly to conservation efforts<span class="p2n-project-suffix"></span>.
         </p>
         <div class="p2n-content">
-          <div class="p2n-amounts">
+          <div class="p2n-amounts" role="group" aria-label="Select contribution amount">
             ${this.predefinedAmounts
                 .map(
                     (amount) => `
-              <button class="p2n-amount ${this.selectedAmount === amount && !this.isCustom ? "selected" : ""}" data-amount="${amount}">
+              <button class="p2n-amount ${this.selectedAmount === amount && !this.isCustom ? "selected" : ""}" data-amount="${amount}" aria-pressed="${this.selectedAmount === amount && !this.isCustom ? "true" : "false"}" aria-label="${this.formatCurrency(amount)}">
                 ${this.formatCurrency(amount)}
               </button>
             `
                 )
                 .join("")}
             <div class="p2n-custom-wrapper">
-              <span class="p2n-custom-label">Custom:</span>
-              <input type="number" class="p2n-custom" placeholder="0.00"
+              <label class="p2n-custom-label" for="p2n-custom-input">Custom:</label>
+              <input type="number" id="p2n-custom-input" class="p2n-custom" placeholder="0.00"
                      min="${this.minAmount}" step="0.1"
-                     value="${this.customAmount}">
+                     value="${this.customAmount}"
+                     aria-label="Custom contribution amount">
             </div>
           </div>
-          <button class="p2n-contribute" ${!this.isEnabled || currentAmount < this.minAmount ? "disabled" : ""}>
+          <button class="p2n-contribute" aria-label="Contribute selected amount" ${!this.isEnabled || currentAmount < this.minAmount ? "disabled" : ""}>
             Contribute ${this.currencySymbol}${currentAmount.toFixed(2)}
           </button>
+          <div class="p2n-live-region" role="status" aria-live="polite" style="position: absolute; left: -9999px; height: 1px; width: 1px; overflow: hidden;"></div>
         </div>
       </div>
     `;
 
+        // Populate the project name via textContent to prevent XSS from API-sourced project names.
+        if (this.activeProjectName) {
+            const suffix = this.shadowRoot.querySelector(".p2n-project-suffix");
+            if (suffix) {
+                suffix.appendChild(document.createTextNode(" in project "));
+                const strong = document.createElement("strong");
+                strong.textContent = this.activeProjectName;
+                suffix.appendChild(strong);
+            }
+        }
+
         this.attachEventListeners();
     }
 
+    private removeEventListeners(): void {
+        for (const cleanup of this.eventCleanups) {
+            try {
+                cleanup();
+            } catch {
+                // Ignore — element may already be detached.
+            }
+        }
+        this.eventCleanups = [];
+    }
+
     private attachEventListeners(): void {
+        // Clean up any previously attached listeners before re-attaching.
+        this.removeEventListeners();
+
         if (!this.shadowRoot) return;
 
         const amountButtons = this.shadowRoot.querySelectorAll(".p2n-amount");
@@ -458,7 +562,7 @@ export class Pay2NatureWidget {
 
         // Amount selection
         amountButtons.forEach((button) => {
-            button.addEventListener("click", (e) => {
+            const onClick = (e: Event) => {
                 const amount = parseFloat(
                     (e.target as HTMLElement).dataset.amount || "0"
                 );
@@ -467,11 +571,15 @@ export class Pay2NatureWidget {
                 if (customInput) customInput.value = "";
                 this.updateDisplayedAmount();
                 this.updatePresetButtonStates();
-            });
+            };
+            button.addEventListener("click", onClick);
+            this.eventCleanups.push(() =>
+                button.removeEventListener("click", onClick)
+            );
         });
 
         // Custom amount input
-        customInput.addEventListener("input", (e) => {
+        const onCustomInput = (e: Event) => {
             const value = (e.target as HTMLInputElement).value;
             this.customAmount = value;
             const numValue = parseFloat(value);
@@ -484,15 +592,23 @@ export class Pay2NatureWidget {
 
             this.updateDisplayedAmount();
             this.updatePresetButtonStates();
-        });
+        };
+        customInput.addEventListener("input", onCustomInput);
+        this.eventCleanups.push(() =>
+            customInput.removeEventListener("input", onCustomInput)
+        );
 
         // Contribute button
-        contributeButton.addEventListener("click", (e) => {
+        const onContributeClick = (e: Event) => {
             e.preventDefault();
             if (!this.isProcessing) {
                 this.handleContribution();
             }
-        });
+        };
+        contributeButton.addEventListener("click", onContributeClick);
+        this.eventCleanups.push(() =>
+            contributeButton.removeEventListener("click", onContributeClick)
+        );
     }
 
     private selectAmount(amount: number, isCustom: boolean): void {
@@ -534,12 +650,37 @@ export class Pay2NatureWidget {
             const amount = parseFloat(
                 button.getAttribute("data-amount") || "0"
             );
-            if (amount === this.selectedAmount && !this.isCustom) {
+            const isSelected =
+                amount === this.selectedAmount && !this.isCustom;
+            if (isSelected) {
                 button.classList.add("selected");
+                button.setAttribute("aria-pressed", "true");
             } else {
                 button.classList.remove("selected");
+                button.setAttribute("aria-pressed", "false");
             }
         });
+    }
+
+    /**
+     * Surface a transient error message to the user via the contribute button
+     * and the aria-live region, without throwing or destroying the widget.
+     */
+    private surfaceContributeError(message: string): void {
+        if (!this.shadowRoot) return;
+        const contributeButton = this.shadowRoot.querySelector(
+            ".p2n-contribute"
+        ) as HTMLButtonElement | null;
+        if (contributeButton) {
+            contributeButton.textContent = message;
+            contributeButton.style.backgroundColor = "#ef4444";
+            setTimeout(() => {
+                contributeButton.style.backgroundColor = "";
+                this.updateDisplayedAmount();
+            }, 4000);
+        }
+        const liveRegion = this.shadowRoot.querySelector(".p2n-live-region");
+        if (liveRegion) liveRegion.textContent = message;
     }
 
     private async handleContribution(): Promise<void> {
@@ -569,8 +710,17 @@ export class Pay2NatureWidget {
                     providerValue: this.mobileMoneyProvider,
                 });
                 this.setupMobileMoneyModalCallbacks();
+            } else if (this.mobileMoneyModalFailed) {
+                this.surfaceContributeError(
+                    "Mobile money is unavailable. Please refresh the page or contact support."
+                );
+                this.onError(
+                    new Error(
+                        "Pay2Nature: mobile-money-modal.js failed to load; mobile money payment unavailable."
+                    )
+                );
             } else {
-                console.error("Mobile money modal not loaded yet");
+                this.surfaceContributeError("Mobile money is loading. Please try again in a moment.");
             }
             return;
         } else {
@@ -594,7 +744,8 @@ export class Pay2NatureWidget {
                 contributeButton.innerHTML = "Processing...";
             }
 
-            const response = await fetch(
+            // Payment POST: timeout but NO retry — retrying could cause double-charge.
+            const response = await this.fetchWithTimeout(
                 `${this.baseUrl}/api/widget/${this.widgetToken}/stripe/create-payment-link`,
                 {
                     method: "POST",
@@ -625,10 +776,10 @@ export class Pay2NatureWidget {
             });
 
             if (contributeButton) {
-                const successMessage = result.projectName
+                // Use textContent to prevent XSS from API-sourced project name.
+                contributeButton.textContent = result.projectName
                     ? `✓ Opening payment for ${result.projectName}...`
                     : `✓ Opening payment...`;
-                contributeButton.innerHTML = successMessage;
                 contributeButton.style.backgroundColor = "#10b981";
 
                 setTimeout(() => {
@@ -673,12 +824,25 @@ export class Pay2NatureWidget {
         }
 
         const script = document.createElement("script");
-        script.src = `${this.baseUrl}/widget/mobile-money-modal.js`;
+        script.src =
+            this.mobileMoneyModalUrl ||
+            `${this.baseUrl}/widget/mobile-money-modal.js`;
         script.onload = () => {
-            this.mobileMoneyModal = new (window as any).MobileMoneyModal();
+            const Modal = (window as any).MobileMoneyModal;
+            if (typeof Modal === "function") {
+                this.mobileMoneyModal = new Modal();
+            } else {
+                this.mobileMoneyModalFailed = true;
+                console.error(
+                    "Pay2Nature: mobile-money-modal.js loaded but did not expose `MobileMoneyModal` on window."
+                );
+            }
         };
         script.onerror = () => {
-            console.error("Failed to load mobile money modal script");
+            this.mobileMoneyModalFailed = true;
+            console.error(
+                `Pay2Nature: failed to load mobile money modal script from ${script.src}`
+            );
         };
         document.head.appendChild(script);
     }
@@ -716,7 +880,6 @@ export class Pay2NatureWidget {
                 );
             },
             onHide: () => {
-                this.showMobileMoneyPrompt = false;
                 this.mobileMoneyNumber = "";
                 this.mobileMoneyName = "";
                 this.mobileMoneyProvider = "";
@@ -752,7 +915,8 @@ export class Pay2NatureWidget {
                 customerName,
             };
 
-            const response = await fetch(
+            // Payment POST: timeout but NO retry — retrying could cause double-charge.
+            const response = await this.fetchWithTimeout(
                 `${this.baseUrl}/api/widget/${this.widgetToken}/mobileMoney/initiate-payment`,
                 {
                     method: "POST",
@@ -819,6 +983,9 @@ export class Pay2NatureWidget {
 
     // Public API methods
     public destroy(): void {
+        // Detach all event listeners before tearing down the shadow DOM.
+        this.removeEventListeners();
+
         if (this.shadowRoot) {
             // Clear the shadow root content instead of trying to remove it
             try {
@@ -839,5 +1006,28 @@ export class Pay2NatureWidget {
             this.config = { ...this.config, ...config };
             this.render();
         }
+    }
+
+    /**
+     * Enable or disable the widget. When disabled, the contribute button is
+     * disabled and the `onToggle` callback fires with the new state.
+     */
+    public setEnabled(isEnabled: boolean): void {
+        if (this.isEnabled === isEnabled) return;
+        this.isEnabled = isEnabled;
+        // Update the contribute button state without a full re-render.
+        if (this.shadowRoot) {
+            const contributeButton = this.shadowRoot.querySelector(
+                ".p2n-contribute"
+            ) as HTMLButtonElement | null;
+            if (contributeButton) {
+                this.updateDisplayedAmount();
+            }
+        }
+        this.onToggle(isEnabled);
+    }
+
+    public isWidgetEnabled(): boolean {
+        return this.isEnabled;
     }
 }

@@ -122,4 +122,4 @@ const widget = new Pay2NatureWidget({
 ## Need Help?
 
 - GitHub Issues: [Create an issue](https://github.com/IndelibleIncLtd/pay2nature-web-sdk/issues)
-- Email: support@pay2nature.com
+- Email: london@indelible-inclusion.com

@@ -122,8 +122,8 @@ npm link @pay2nature/widget-sdk
 ### 1. Prepare for Publishing
 
 - Update version in `package.json`
-- Update `CHANGELOG.md` (if you have one)
-- Ensure all tests pass
+- Update `CHANGELOG.md`
+- Smoke-test the build in a real consumer app (a test suite is on the roadmap but not yet shipped)
 - Build the package: `npm run build`
 
 ### 2. Check What Will Be Published
